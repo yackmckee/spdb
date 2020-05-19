@@ -1,7 +1,7 @@
-# Speediboi
+# SpeeDyBase
 ## A protocol and rust implementation for a light fast peer to peer database
 
-This repository contains a description of the Speediboi protocol, and a performant Rust implementation with a network API.
+This repository contains a description of the SPDB protocol, and a performant Rust implementation with a network API.
 
 ## Building
 
