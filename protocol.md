@@ -1,7 +1,7 @@
 # SPDB
 ## SPeeDyBase
 
-SPDB is a simple network, designed to be very fast(implied by the name) and highly adaptable to many use-cases. It supports exchanging hash-addressed immutable blocks of data, as well as creating signed and encrypted data channels and providing weak anonymity guarantees.
+SPDB is a simple network, designed to be very fast(implied by the name) and highly adaptable to many use-cases. It supports exchanging hash-addressed immutable blocks of data, as well as creating signed and encrypted uni-directional data channels and providing weak anonymity guarantees.
 
 The primary use-case of SPDB is as a server-side utility similar to IPFS gateways, but flexible enough to meet many different needs.
 
@@ -23,11 +23,11 @@ The main routing model is F2F. Nodes must exchange keys and contact information 
 4) Issues of trust between nodes are turned into issues of trust between operators, which may be very different in different contexts
 5) Public-key cryptography is computationally expensive and vulnerable to quantum computers. It is used by SPDB only when no alternative exists.
 
-Currently, SHA256 is the preferred hashing function. This may change in the future if weaknesses are found.
+Currently, SHA256 is the only hashing function used(aside from Poly1305 for AEAD). This may change in the future if weaknesses are found.
 
 ## Message Format Description
 
-The protocol assumes that UDP and TCP are available and distinguishes between them, however, any transport protocols which offer the same guarantees are usable. In fact, TCP messages are *only* uni-directional and short-lived, so more lax protocols like muTP could be used.
+The protocol assumes that UDP and TCP are available and distinguishes between them, however, any transport protocols which offer the same guarantees are usable, and TCP messages are only uni-directional so a simpler protocol like muTP could be used.
 SPDB is designed with IPv6 in mind, and the IPv6 minimum MTU of 1280 bytes is assumed to be the MTU of all paths.
 All integers are in big-endian and are unsigned unless specified otherwise.
 All message payloads are padded with random data. UDP messages are padded to the MTU. TCP messages are padded with a random amount of data less than one quarter of their payload length.
@@ -36,8 +36,6 @@ All messages have the following format:
 ```
 +----------------------------------------+
 | nonce: 16 bytes                        |
-+----------------------------------------+
-| AEAD tag: 16 bytes                     |
 +----------------------------------------+
 | nonce for reply: 16 bytes              |
 +----------------------------------------+
@@ -49,9 +47,14 @@ All messages have the following format:
 +----------------------------------------+
 | payload                                |
 +----------------------------------------+
+| padding                                |
++----------------------------------------+
+| AEAD tag: 16 bytes                     |
++----------------------------------------+
 ```
 
-Everything after the nonce and AEAD tag are encrypted with the appropriate nonce and key.
+Everything between the nonce and AEAD tag is encrypted with the appropriate nonce and key and verified with the AEAD tag. Messages which fail verification are ignored
+AEAD tags are ignored for TCP messages as they have variable length and their output is supposed to be verified anyway.
 Nonces are sent along with every message even when not technically necessary, as they serve to identify responses.
 
 ## Message Flags
@@ -69,9 +72,10 @@ non-standard flags should have masks of 0x10 or higher.
 
 ## NodeID's
 To meet different needs, NodeID's can be exchanged with node contact information or not. If a node does not have a self-assigned NodeID, it is assumed to be SHA256(underlying link identifier). The most common underlying link id would be IP address and port, always encoded as IPv6 and with port after IP.
+It must be the case that if node A thinks its own NodeID is 
 
 ## EndpointID's
-EndpointID's are calculated using hashes of the data at the endpoint. They are 36 bytes long, the first 4 bytes being an unsigned int which is the amount of the message that must hash to the remaining 32 bytes.
+EndpointID's are calculated using hashes of the data at the endpoint. They are 36 bytes long, the first 4 bytes being an unsigned int which is the amount of the endpoint contents that must hash to the remaining 32 bytes.
 EndpointID's provide a weak form of identity. Primarily, they are used for the following two use-cases: exchanging immutable blocks of hash-addressed data, and exchanging public keys.
 Only the last 32 bytes are used when finding the distance between a NodeID and a EndpointID.
 
@@ -82,13 +86,13 @@ SPDB recognizes the following message types by default:
 +--------------+--------+--------------------------------------------------------------------------------+
 | name         | number | description                                                                    |
 +--------------+--------+--------------------------------------------------------------------------------+
-| SEEK         | 0x01   | Announce that this node is looking for a particular set of messages            |
+| SEEK         | 0x01   | Announce that this node is looking for a particular set of endpoints           |
 +--------------+--------+--------------------------------------------------------------------------------+
 | GET          | 0x02   | A request a message, while sending an optional public key                      |
 +--------------+--------+--------------------------------------------------------------------------------+
-| MSG          | 0x03   | A message                                                                      |
+| MSG          | 0x03   | The contents of an endpoint, or an encrypted channel                           |
 +--------------+--------+--------------------------------------------------------------------------------+
-| ANNOUNCE     | 0x04   | Announce that this node knows how to reach some set of messages                |
+| ANNOUNCE     | 0x04   | Announce that this node knows how to reach some set of endpoints               |
 +--------------+--------+--------------------------------------------------------------------------------+
 | REKEY        | 0x05   | Negotiate a key change                                                         |
 +--------------+--------+--------------------------------------------------------------------------------+
@@ -134,8 +138,8 @@ The 'sought ID's' are encoded like so:
 +------------+-------------+-------------+------------+
 ```
 
-EndpointID's are sorted by path length in the seeking-queue. When a EndpointID is added to the seek-queue, its hop counter is incremented by a random value in [1,16], and its path length is set to ((old path length)\*(old hop count) + ((neighbor path length)\*(random integer in [1,16])))/(new hop length). Both are intialized to 0.
-The neighbor path length should be the round-trip time of the last ANNOUNCE ping that was sent, in milliseconds.
+EndpointID's are sorted by path length in the seeking-queue. When an EndpointID is added to the seek-queue, its hop counter is incremented by a random value in [1,16], and its path length is set to ((old path length)\*(old hop count) + ((neighbor path length)\*(random integer in [1,16])))/(new hop length). Both are intialized to 0.
+The neighbor path length should be the round-trip time of the last ANNOUNCE ping that was sent, in centiseconds(units of 10 milliseconds).
 
 
 ---
@@ -143,7 +147,7 @@ The neighbor path length should be the round-trip time of the last ANNOUNCE ping
 ANNOUNCE
 
 An ANNOUNCE message has the exact same structure as a SEEK message, but means an entirely different thing.
-Nodes periodically exchange ANNOUNCE messages as pings. It is expected that the recipient node will immediately reply with their own ANNOUNCE. Like SEEKs, the contents of these ANNOUNCE messages should be blocks that have not been recently ANNOUNCEd, and at least one of them should have a EndpointID for which the recipient is the closest neighbor.
+Nodes periodically exchange ANNOUNCE messages as pings. It is expected that the recipient node will immediately reply with their own ANNOUNCE. Like SEEKs, the contents of these ANNOUNCE messages should be blocks that have not been recently ANNOUNCEd.
 Nodes not only keep a list of which messages they themselves can provide, but also a list of messages they have recieved from other ANNOUNCE messages. These are stored and prioritized just like the seeking-queue.
 When a node recieves EndpointID in a SEEK message that appears in their announcing-queue, they should immediately send an ANNOUNCE ping(but not a reply) that contains those EndpointIDs.
 When a node receives an ANNOUNCE message containing a EndpointID that is in their seeking queue, but which they themselves are not seeking, they should immediately send an ANNOUNCE ping to the neighbor who sought those EndpointIDs, containing those EndpointIDs. The EndpointID's should then be added to the announce-queue and dropped from the seeking-queue.
@@ -170,11 +174,11 @@ GET
 A GET message is a request for a specific resource, with some optional data to be used for either routing or key exchange.
 When a node recieves a GET message that is not in their announce-queue, they should reply with DEADPATH.
 If the node itself can serve the GET, it replies with an MSG. The details of what this MSG should contain vary.
-Otherwise, they should forward the message to the next hop in the path as indicated by their announce-queue, and keep state to eventually forward a MSG or DEADPATH message back if the reply-to address is zero. This state will be deleted after an appropriate timeout(5 seconds is recommended). TCP connections for this forwarding are not kept open for multiple messages unless keep-alive is enabled. Nodes should strip keep-alive if they do not respect it.
+Otherwise, they should forward the message to the next hop in the path as indicated by their announce-queue, and keep state to eventually forward a MSG or DEADPATH message back if the reply-to fields are zero. This state will be deleted after an appropriate timeout(5 seconds is recommended). TCP connections for this forwarding are not kept open for multiple messages unless keep-alive is enabled. Nodes should strip keep-alive if they do not respect it.
 
 ```
 +----------------------+--------------------------------+
-| payload max length   | 1226 bytes                     |
+| payload max length   | 1210 bytes                     |
 +----------------------+--------------------------------+
 | payload contents     | below                          |
 +----------------------+--------------------------------+
@@ -204,18 +208,22 @@ The payload of a GET message:
 +--------------+-------------------------------+
 | 2            | public key type(0 for none)   |
 +--------------+-------------------------------+
-| <= 1154      | encryption public key         |
+| <= 1024      | encryption public key         |
++--------------+-------------------------------+
+| <= 82        | additional request data       |
 +--------------+-------------------------------+
 ```
 
 The length and encoding of the public key is determined by its 'type'. The only encryption public key type which must be supported by all nodes is Curve25519-ChaCha20-Poly1305, which has type 0x0001 and length 32 bytes.
 If the reply-to address is 0, all the reply-to fields are ignored
 
+"additional request data" can be used to send arbitrary data, but it is not encrypted or verified by the protocol.
+
 ---
 
 MSG
 
-An MSG message contains a higher-level "message" object, which is what the user actually sees as output. Their payload consists of two parts: an immutable hash-addressed part and a secondary part, which is usually signed and encrypted but not necessarily hashed.
+An MSG message contains the data of an endpoint, or an encrypted channel. Their payload consists of two parts: an immutable hash-addressed part and a secondary part, which is usually signed and encrypted but not necessarily hashed.
 MSG's can be exchanged an arbitrary number of times in response to each other, but this is highly discouraged.
 
 ```
@@ -243,7 +251,7 @@ The second kind contains public key information in the hashed part, and encrypte
 +--------------+----------------------------+
 | 2            | encryption public key type |
 +--------------+----------------------------+
-| <= 1154      | encryption public key      |
+| <= 1025      | encryption public key      |
 +--------------+----------------------------+
 ```
 
@@ -265,8 +273,8 @@ After GETing a block of hashed data that they are prepared to seed, nodes should
 REKEY
 
 Re-keying is actually very simple in SPDB. For each neighbor, a node has at most two valid encryption keys. They can receive and process messages with either, but send with only one at a time.
-Nodes will periodically re-key with each other, typically once per day. One node will first send a REKEY message with a new key that may be used to encrypt messages to them. They wait for the other node to reply with a REKEY containing the same key. They then reply with an ANNOUNCE ping using the new key and forget the old one, and the other node forgets the old key when the ANNOUNCE ping is replied to.
-If a node receives a REKEY message containing a different key from the one they are re-keying with, they drop their new key and reply with the one they just got.
+Nodes will periodically re-key with each other, typically once per day. One node will first send a REKEY message with a new key that may be used to encrypt messages to them. They wait for the other node to reply with a REKEY containing the same key. From then on, the new key is used for encryption as well as decryption.
+If a node sends a REKEY message and receives a REKEY with a different key, they should compare bytes 0-8 of the two keys as unsigned integers, and send a REKEY containing the higher key to complete the process.
 
 ```
 +----------------------+--------------------------------+
@@ -274,7 +282,7 @@ If a node receives a REKEY message containing a different key from the one they 
 +----------------------+--------------------------------+
 |  payload contents    | Proposed key                   |
 +----------------------+--------------------------------+
-| valid responses      | REKEY,ANNOUNCE                 |
+| valid responses      | REKEY                          |
 +----------------------+--------------------------------+
 | valid in-response-to | REKEY                          |
 +----------------------+--------------------------------+
@@ -288,8 +296,8 @@ DEADPATH
 
 A DEADPATH message indicates that some previously-ANNOUNCEd path should no longer be considered valid. This prevents no-longer-valid paths from cluttering the network and is also a signal for an endpoint just not being available.
 When a node receives DEADPATH in response to a GET request, it should forward the DEADPATH down the line if and only if no other path is known, otherwise it should try to forward the GET to a new path.
-DEADPATHs in response to GETs always cause the dead path to be pruned from memory. A DEADPATH in response to MSG does not cause this behavior, and should simply be forwarded and cause state to be dropped.
-
+DEADPATHs in response to GETs always cause the dead path to be pruned from the announce-queue. A DEADPATH in response to MSG instead causes the channel to be dropped. If the 
+DEADPATH in response to a MSG should be using the same TCP socket as the MSG.
 ```
 +----------------------+--------------------------------+
 | payload max length   | 0 bytes                        |
@@ -300,9 +308,12 @@ DEADPATHs in response to GETs always cause the dead path to be pruned from memor
 +----------------------+--------------------------------+
 | valid in-response-to | GET,MSG                        |
 +----------------------+--------------------------------+
-| protocol             | UDP                            |
+| protocol             | UDP,TCP                        |
 +----------------------+--------------------------------+
 ```
 
 ## Some notes on flow control
 Generally, every node in a forwarding chain should implement some kind of flow control. An internal buffer should be kept, which all MSG messages should be required to fill up before they are decrypted, re-encrypted, and passed down the line. This prevents malicious tuning of flow. 
+
+##Possible future directions
+It would be possible to combine REKEY events with ANNOUNCE or SEEK but there doesn't seem to be a performance advantage to it.
