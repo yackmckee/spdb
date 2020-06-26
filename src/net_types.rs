@@ -3,10 +3,11 @@ use std::time::{Duration,Instant,SystemTime,UNIX_EPOCH};
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use rand_core::RngCore;
-use crypto::Pubkey;
 use sha2::{Sha256, Digest};
+use x25519_dalek::EphemeralSecret;
 
 struct EndpointID {
+    is_dynamic: bool,
     length: u32,
     hash: [u8; 32]
 };
@@ -18,6 +19,9 @@ impl EndpointID {
         } else {
             buf[0..4].copy_from_slice(&self.length.to_be_bytes());
             buf[4..36].copy_from_slice(&self.hash);
+            if self.is_dynamic {
+                buf[0] = buf[0] | 0x10000000;
+            }
             Ok(())
         }
     }
@@ -27,7 +31,8 @@ impl EndpointID {
             Err
         } else {
             Ok(EndpointID {
-                  length: u32::from_be_bytes([encoded[0],encoded[1],encoded[2],encoded[3]]),
+                  is_dynamic: if (encoded[0] >> 7) == 1 { true } else { false},
+                  length: u32::from_be_bytes([encoded[0] & 0x7f,encoded[1],encoded[2],encoded[3]]),
                   hash: [u8 ;32]::<&[u8]>try_from(&encoded[4..36])
             })
         }
@@ -268,15 +273,32 @@ impl RoutingTable {
     }
 
     //get the index of a neighbor with the given IpAddr
-    pub fn find_neighbor_index(&self, which: SocketAddr) -> Result<u16> {
+    pub fn find_neighbor_index(&self, which: SocketAddr) -> Option<u16> {
         for (i,(node,_,_)) in self.neighbors.iter().enumerate() {
             if node.IP == which {
-                return Ok(i as u16);
+                return Some(i as u16);
             }
         }
-        Err
+        None
     }
 }
+
+//a struct containing data necessary to properly parse a response to a GET
+struct GetData {
+    endpoint: EndpointID,
+    my_secret_key: Option<EphemeralSecret>,
+    my_symmetric_key: Option<[u8;32]>
+}
+
+//a struct containing data necessary to properly generate a GET for an endpoint we are seeking
+//we don't store the endpoint specifically in here
+struct SeekData {
+    use_direct: bool,
+    use_keep_alive: bool,
+    use_special_key: Option<EphemeralSecret>,
+    additional_data: Option<Vec<u8>>
+}
+
 //contains information necessary to reply to a message originating from this node
 enum ReplyData {
     REKEY([u8;16]), //waiting for a reply to a REKEY

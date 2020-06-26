@@ -75,7 +75,16 @@ To meet different needs, NodeID's can be exchanged with node contact information
 It must be the case that if node A thinks its own NodeID is 
 
 ## EndpointID's
-EndpointID's are calculated using hashes of the data at the endpoint. They are 36 bytes long, the first 4 bytes being an unsigned int which is the amount of the endpoint contents that must hash to the remaining 32 bytes.
+EndpointID's are calculated using hashes of the data at the endpoint. They are 36 bytes long, with the following format:
+
+```
++----------+---------------------------------------------+--------------------------+--------------------------+
+| bit      | 0                                           | 1-31                     | 32-255                   |
++----------+---------------------------------------------+--------------------------+--------------------------+
+| contents | 1 if endpoint has dynamic data, 0 otherwise | size of non-dynamic data | hash of non-dynamic data |
++----------+---------------------------------------------+--------------------------+--------------------------+
+```
+
 EndpointID's provide a weak form of identity. Primarily, they are used for the following two use-cases: exchanging immutable blocks of hash-addressed data, and exchanging public keys.
 Only the last 32 bytes are used when finding the distance between a NodeID and a EndpointID.
 
@@ -228,7 +237,7 @@ MSG's can be exchanged an arbitrary number of times in response to each other, b
 
 ```
 +----------------------+--------------------------------+
-| payload max length   | 2^32 bytes                     |
+| payload max length   | 2^31 - 1 bytes                 |
 +----------------------+--------------------------------+
 |  payload contents    | EndpointID                     |
 |                      | hashed data                    |
