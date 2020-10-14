@@ -1,3 +1,5 @@
+Note: this document was written in vim, github butchers the formatting. I highly recommend you read the raw text version.
+
 # SPDB
 ## SPeeDyBase
 
