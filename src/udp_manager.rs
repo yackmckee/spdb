@@ -1,3 +1,5 @@
+//NOTE: this is no longer up to date! Keeping it though because some of the code may be useful in
+//the future
 //this file contains code which manages all state for SPDB events.
 //also contains the udp_listen, which is the loop handling incoming UDP traffic
 //UDP messages are all handled synchronously, since there is no significant computation involved in
@@ -13,7 +15,7 @@ use std::collections::{HashMap, HashMap};
 use tokio::sync::{Mutex,RwLock}
 
 
-async fn udp_listen(listen_address: SocketAddr, announce_queue: Arc<Mutex<PathQueue>>, seeking_queue: Arc<Mutex<PathQueue>>, seeking_set: Arc<RwLock<HashMap<EndpointId,SeekData>>>, waiting_replies: Arc<Mutex<HashMap<([u8;16],u16),ReplyData>>>, neighbors: Arc<RwLock<RoutingTable>>, endpoints_to_serve: Arc<RwLock<EndpointManager>>, mem_limit: usize) -> Result<()> {
+async fn udp_listen(listen_address: SocketAddr, announce_queue: Arc<Mutex<PathQueue>>, seeking_set: Arc<RwLock<HashMap<EndpointId,SeekData>>>, waiting_replies: Arc<Mutex<HashMap<([u8;16],u16),ReplyData>>>, neighbors: Arc<RwLock<RoutingTable>>, endpoints_to_serve: Arc<RwLock<EndpointManager>>, mem_limit: usize) -> Result<()> {
     let mut seeking_queue = PathQueue::new(mem_limit/10);
     let mut listener = UdpSocket::bind(listen_address)?;
     let mut buf: [u8; 1272] = [0;1272];
@@ -72,11 +74,10 @@ async fn udp_listen(listen_address: SocketAddr, announce_queue: Arc<Mutex<PathQu
                         let this_hop_ctr = path[0];
                         let this_path_len = u16::from_le_bytes([path[1],path[2]]);
                         let this_endpoint = EndpointID::decode(path[3..]).unwrap(); //should never panic since we are guaranteed 39 bytes in each path
-                        if neighbors.
                         table.add_path(&mut queue, node_index, this_hop_ctr, this_path_len, this_endpoint, &mut this_rng);
                     }
                 } else {
-	                //case 2: this is a new 
+	                //case 2: this is a new ping
 	                //we need to insert the newly announced paths, and then send our own back
 	                //this requires locking both the queue and routing table
 	                //no problemo though
@@ -105,7 +106,7 @@ async fn udp_listen(listen_address: SocketAddr, announce_queue: Arc<Mutex<PathQu
                 for path in payload[1..].chunks_exact(39) {
                     let this_endpoint = EndpointID::decode(path);
                     //case: we happen to be personally seeking this endpoint
-                    if let Some(data) = seeking.read().await.get(this_endpoint) {
+                    if let Some(data) = seeking_set.read().await.get(this_endpoint) {
                         //construct the GET request
                         let mut this_get_data = GetData { endpoint: this_endpoint, my_secret_key: None, my_symmetric_key: None };
                         //generate a new nonce
